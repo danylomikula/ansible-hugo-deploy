@@ -1,0 +1,85 @@
+---
+# Tasks for configuring firewalld on Rocky Linux.
+- name: Install firewalld
+  ansible.builtin.dnf:
+    name: firewalld
+    state: present
+  tags: ['firewall', 'packages']
+
+- name: Start and enable firewalld
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true
+  tags: ['firewall']
+
+- name: Configure firewall zone
+  ansible.posix.firewalld:
+    zone: "{{ firewall_zone }}"
+    state: enabled
+    permanent: true
+    immediate: true
+  tags: ['firewall']
+
+- name: Allow specified services
+  ansible.posix.firewalld:
+    service: "{{ item }}"
+    zone: "{{ firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ firewall_allowed_services }}"
+  when: (firewall_allowed_services | default([])) | length > 0
+  notify: Reload firewalld
+  tags: ['firewall', 'services']
+
+- name: Allow specified TCP/UDP ports
+  ansible.posix.firewalld:
+    port: "{{ item.port }}/{{ item.proto }}"
+    zone: "{{ firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ firewall_allowed_ports }}"
+  when: (firewall_allowed_ports | default([])) | length > 0
+  notify: Reload firewalld
+  tags: ['firewall', 'ports']
+
+- name: Allow ICMP types
+  ansible.posix.firewalld:
+    icmp_block: "{{ item }}"
+    zone: "{{ firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: disabled
+  loop: "{{ firewall_allowed_icmp_types | default(['echo-request']) }}"
+  when: firewall_allowed_icmp
+  notify: Reload firewalld
+  tags: ['firewall', 'icmp']
+
+- name: Block ICMP types when disabled
+  ansible.posix.firewalld:
+    icmp_block: "{{ item }}"
+    zone: "{{ firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ firewall_allowed_icmp_types | default(['echo-request']) }}"
+  when: not firewall_allowed_icmp
+  notify: Reload firewalld
+  tags: ['firewall', 'icmp']
+
+- name: Check current default zone
+  ansible.builtin.command:
+    cmd: firewall-cmd --get-default-zone
+  register: firewall_current_default_zone
+  changed_when: false
+  tags: ['firewall']
+
+- name: Set default zone
+  ansible.builtin.command:
+    cmd: firewall-cmd --set-default-zone={{ firewall_zone }}
+  when: firewall_current_default_zone.stdout != firewall_zone
+  changed_when: true
+  notify: Reload firewalld
+  tags: ['firewall']

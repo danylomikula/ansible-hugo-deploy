@@ -1,0 +1,10 @@
+---
+# This is an example vault file. Copy this to vault.yml and encrypt it with:
+# ansible-vault create group_vars/webservers/vault.yml
+#
+# Then add your actual secrets.
+
+# Cloudflare API token for DNS-01 ACME challenge
+# Get this from: https://dash.cloudflare.com/profile/api-tokens
+# Required permissions: Zone:DNS:Edit, Zone:Zone:Read
+vault_cloudflare_api_token: "your-actual-cloudflare-api-token-here"

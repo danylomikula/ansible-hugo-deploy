@@ -1,0 +1,36 @@
+# Ignore Ansible retry files
+*.retry
+
+# Ignore fact cache
+/tmp/ansible_facts/
+
+# Ignore Ansible local collections and cache
+.ansible/
+
+# Ignore generated deploy key
+deploy_key.pub
+
+# Ignore vault files with secrets (but allow .example files)
+**/vault.yml
+!**/vault.yml.example
+
+# Ignore vault password files
+.vault_pass
+*_vault_pass
+.ansible_vault_pass
+
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore OS files
+.DS_Store
+Thumbs.db

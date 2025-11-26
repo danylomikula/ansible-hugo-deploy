@@ -1,0 +1,16 @@
+[Unit]
+Description=Rebuild website daily
+RefuseManualStart=no
+RefuseManualStop=no
+
+[Timer]
+# Run {{ webrebuild_boot_delay }} seconds after boot for the first time.
+OnBootSec={{ webrebuild_boot_delay }}
+
+# Run daily at scheduled time.
+OnCalendar={{ webrebuild_schedule }}
+
+Unit=webrebuild.service
+
+[Install]
+WantedBy=timers.target

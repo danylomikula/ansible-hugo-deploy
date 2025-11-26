@@ -1,0 +1,16 @@
+[Unit]
+Description=Rebuild website from Git repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ webrebuild_service_user }}
+Group={{ webrebuild_service_group }}
+WorkingDirectory={{ website_root }}
+Environment=PATH={{ caddy_webserver_rebuild_path }}
+{% for command in webrebuild_commands %}
+ExecStart=/usr/bin/env bash -c "{{ command }}"
+{% endfor %}
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,13 @@
+---
+# Main playbook for deploying hugo website.
+- name: Deploy hugo website
+  hosts: webservers
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: caddy_webserver
+      tags: ['caddy', 'webserver']
+
+    - role: firewall
+      tags: ['firewall', 'security']
