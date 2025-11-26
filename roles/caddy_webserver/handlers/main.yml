@@ -1,0 +1,18 @@
+---
+# Handlers for Caddy webserver role.
+- name: Reload Caddy
+  ansible.builtin.systemd:
+    name: caddy
+    state: reloaded
+
+- name: Restart Caddy
+  ansible.builtin.systemd:
+    name: caddy
+    state: restarted
+    daemon_reload: true
+
+- name: Restart webrebuild timer
+  ansible.builtin.systemd:
+    name: webrebuild.timer
+    state: restarted
+    daemon_reload: true

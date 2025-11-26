@@ -1,0 +1,50 @@
+namespace: danylomikula
+name: ansible_hugo_deploy
+version: 0.0.0
+readme: README.md
+authors:
+  - Danylo Mikula <admin@mikula.dev>
+description: Automated deployment solution for Hugo static websites with Caddy web server
+license_file: LICENSE
+tags:
+  - infrastructure
+  - linux
+  - application
+  - hugo
+  - caddy
+  - deployment
+  - static_site
+  - webserver
+  - ssl
+  - letsencrypt
+  - cloudflare
+  - firewall
+  - rocky_linux
+dependencies: {}
+repository: https://github.com/danylomikula/ansible-hugo-deploy
+documentation: https://github.com/danylomikula/ansible-hugo-deploy/blob/main/README.md
+homepage: https://github.com/danylomikula/ansible-hugo-deploy
+issues: https://github.com/danylomikula/ansible-hugo-deploy/issues
+build_ignore:
+  - '*.pyc'
+  - .git
+  - .github
+  - .gitignore
+  - .vscode
+  - .idea
+  - __pycache__
+  - '*.swp'
+  - '*.swo'
+  - '*~'
+  - .DS_Store
+  - Thumbs.db
+  - .ansible
+  - '*.retry'
+  - .pre-commit-config.yaml
+  - deploy_key.pub
+  - '**/*_vault_pass'
+  - '**/vault.yml'
+  - '**/vault.yml.example'
+  - ansible.cfg
+  - inventory/
+  - site.yml

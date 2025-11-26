@@ -1,0 +1,141 @@
+---
+# =============================================================================
+# Domain Configuration
+# =============================================================================
+
+# Your primary domain name (e.g., "example.com")
+domain: "example.com"
+
+# Admin email for Let's Encrypt notifications and Caddy TLS
+admin_email: "admin@{{ domain }}"
+
+# =============================================================================
+# Git Repository Configuration
+# =============================================================================
+
+# SSH URL to your Hugo website Git repository (e.g., "git@github.com:username/repo.git")
+website_repo_url: "git@github.com:username/your-hugo-site.git"
+
+# Branch to deploy from (e.g., "main", "master", or "production")
+website_repo_branch: "main"
+
+# =============================================================================
+# Web Content Paths
+# =============================================================================
+
+# Root directory where the website repository will be cloned
+website_root: "/var/www/{{ domain }}"
+
+# Directory for Caddy access logs
+caddy_log_path: "/var/log/caddy"
+
+# Directory containing Hugo-generated static files (served by Caddy)
+website_public_dir: "{{ website_root }}/public"
+
+# =============================================================================
+# Deploy SSH Key Configuration
+# =============================================================================
+
+# User that owns the deploy SSH key (should match Caddy user)
+deploy_ssh_key_user: "caddy"
+deploy_ssh_key_group: "{{ deploy_ssh_key_user }}"
+
+# Directory and path for the deploy key
+deploy_ssh_key_dir: "/var/lib/{{ deploy_ssh_key_user }}/.ssh"
+deploy_ssh_key_path: "{{ deploy_ssh_key_dir }}/deploy_key"
+
+# SSH key type (ed25519 is recommended for security and performance)
+deploy_ssh_key_type: "ed25519"
+
+# Comment added to the SSH key for identification
+deploy_ssh_key_comment: "{{ domain }}-deploy-key"
+
+# =============================================================================
+# Website Rebuild Configuration
+# =============================================================================
+
+# SystemD timer schedule (format: "DayOfWeek Year-Month-Day Hour:Minute:Second")
+# Default: "*-*-* 04:00:00" means daily at 4:00 AM
+webrebuild_schedule: "*-*-* 04:00:00"
+
+# Delay in seconds before first rebuild after system boot
+webrebuild_boot_delay: "180"
+
+# User and group to run the rebuild service as
+webrebuild_service_user: "caddy"
+webrebuild_service_group: "caddy"
+
+# Commands to run during website rebuild
+# These run in sequence in the website_root directory
+webrebuild_commands:
+  - "git pull origin {{ website_repo_branch }}"
+  - "hugo --gc --minify"
+
+# Hugo version to install (check https://github.com/gohugoio/hugo/releases)
+hugo_version: "0.152.2"
+
+# =============================================================================
+# Caddy Web Server Configuration
+# =============================================================================
+
+# Caddy version to build (check https://github.com/caddyserver/caddy/releases)
+caddy_version: "2.10.2"
+
+# Go version required for building Caddy with custom modules
+caddy_go_version: "1.25.4"
+
+# Additional Caddy modules to compile into custom build
+# These are Go package paths from GitHub
+caddy_modules:
+  - github.com/mholt/caddy-ratelimit    # Rate limiting plugin
+  - github.com/caddy-dns/cloudflare     # Cloudflare DNS challenge for ACME
+
+# Rate limiting configuration (requires caddy-ratelimit module)
+caddy_rate_limit:
+  enabled: true      # Enable/disable rate limiting
+  events: 60         # Maximum number of requests
+  window: "1m"       # Time window for rate limit
+
+# Compression formats to enable for responses
+caddy_compression_formats:
+  - gzip
+  - zstd
+
+# =============================================================================
+# DNS / ACME Configuration
+# =============================================================================
+
+# Cloudflare API token for DNS-01 ACME challenge (stored in vault.yml)
+# Required for automatic SSL certificate generation if using Cloudflare DNS
+cloudflare_api_token: "{{ vault_cloudflare_api_token }}"
+
+# ACME Certificate Authority URL
+# Use staging for testing, production for live certificates
+# Staging (for testing): "https://acme-staging-v02.api.letsencrypt.org/directory"
+# Production: "https://acme-v02.api.letsencrypt.org/directory"
+caddy_acme_ca: "https://acme-v02.api.letsencrypt.org/directory"
+
+# =============================================================================
+# Firewall Configuration (firewalld)
+# =============================================================================
+
+# Default firewall zone to configure
+firewall_zone: "public"
+
+# Services to allow through the firewall (by name)
+firewall_allowed_services:
+  - ssh      # SSH access (port 22)
+  - http     # HTTP traffic (port 80)
+  - https    # HTTPS traffic (port 443)
+
+# Custom ports to allow (uncomment and modify as needed)
+firewall_allowed_ports: []
+#  - { port: 2222, proto: tcp, comment: "Custom SSH port" }
+#  - { port: 8080, proto: tcp, comment: "Alternative HTTP port" }
+
+# Allow ICMP (ping) traffic
+firewall_allowed_icmp: true
+
+# ICMP types to allow when ICMP is enabled
+firewall_allowed_icmp_types:
+  - echo-request   # Allow ping requests

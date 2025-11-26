@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: firewall
+  author: Your Name
+  description: Configure firewalld on Rocky Linux/RHEL-based systems
+  license: MIT
+  min_ansible_version: "2.15"
+
+  platforms:
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+
+  galaxy_tags:
+    - firewall
+    - firewalld
+    - security
+    - networking
+
+dependencies: []

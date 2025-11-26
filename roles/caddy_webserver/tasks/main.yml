@@ -1,0 +1,528 @@
+---
+# Tasks for installing and configuring Caddy web server.
+- name: Install packages
+  ansible.builtin.package:
+    name:
+      - git
+      - tar
+    state: present
+  tags: ['packages']
+
+- name: Enable Caddy COPR repository
+  community.general.copr:
+    name: '@caddy/caddy'
+    state: enabled
+    chroot: "{{ caddy_copr_chroot }}"
+  vars:
+    caddy_copr_chroot: >-
+      {{ 'epel-9-x86_64'
+         if ansible_facts['os_family'] | lower == 'redhat'
+         else (ansible_facts['distribution'] | lower) ~ '-' ~ (ansible_facts['distribution_major_version'] | regex_replace('\\..*', '')) ~ '-x86_64'
+      }}
+  tags: ['caddy', 'repo']
+
+- name: Install Caddy from COPR
+  ansible.builtin.package:
+    name: caddy
+    state: present
+  tags: ['caddy', 'packages']
+
+- name: Check installed Go version
+  ansible.builtin.command: go version
+  register: caddy_webserver_go_version_cmd
+  failed_when: false
+  changed_when: false
+  tags: ['caddy', 'packages']
+
+- name: Determine if Go installation is required
+  ansible.builtin.set_fact:
+    caddy_webserver_go_install_needed: >-
+      {{
+        (caddy_webserver_go_version_cmd.rc != 0)
+        or ((( 'go' ~ caddy_go_version ) not in (caddy_webserver_go_version_cmd.stdout | default(''))))
+      }}
+  tags: ['caddy', 'packages']
+
+- name: Download Go archive
+  ansible.builtin.get_url:
+    url: "https://go.dev/dl/go{{ caddy_go_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/go{{ caddy_go_version }}.linux-amd64.tar.gz"
+    mode: '0644'
+  when: caddy_webserver_go_install_needed | default(true)
+  tags: ['caddy', 'packages']
+
+- name: Remove existing Go installation
+  ansible.builtin.file:
+    path: /usr/local/go
+    state: absent
+  when: caddy_webserver_go_install_needed | default(true)
+  tags: ['caddy', 'packages']
+
+- name: Install Go runtime
+  ansible.builtin.unarchive:
+    src: "/tmp/go{{ caddy_go_version }}.linux-amd64.tar.gz"
+    dest: /usr/local
+    remote_src: true
+  when: caddy_webserver_go_install_needed | default(true)
+  tags: ['caddy', 'packages']
+
+- name: Ensure go binary symlink exists
+  ansible.builtin.file:
+    src: /usr/local/go/bin/go
+    dest: /usr/bin/go
+    state: link
+    force: true
+  when: caddy_webserver_go_install_needed | default(true)
+  tags: ['caddy', 'packages']
+
+- name: Remove Go archive
+  ansible.builtin.file:
+    path: "/tmp/go{{ caddy_go_version }}.linux-amd64.tar.gz"
+    state: absent
+  when: caddy_webserver_go_install_needed | default(true)
+  tags: ['caddy', 'packages']
+
+- name: Install xcaddy helper
+  ansible.builtin.command: /usr/bin/env GOBIN=/usr/local/bin go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+  args:
+    creates: /usr/local/bin/xcaddy
+  environment:
+    GO111MODULE: "on"
+  tags: ['caddy', 'packages']
+
+- name: Ensure Caddy build workspace exists
+  ansible.builtin.file:
+    path: /usr/local/src/caddy-build
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags: ['caddy', 'directories']
+
+- name: Check existing Caddy build signature
+  ansible.builtin.stat:
+    path: /usr/local/src/caddy-build/.build_signature
+  register: caddy_webserver_existing_build_signature_stat
+  tags: ['caddy', 'build']
+
+- name: Read existing Caddy build signature
+  ansible.builtin.slurp:
+    path: /usr/local/src/caddy-build/.build_signature
+  register: caddy_webserver_existing_build_signature
+  when: caddy_webserver_existing_build_signature_stat.stat.exists
+  tags: ['caddy', 'build']
+
+- name: Determine current Caddy build signature
+  ansible.builtin.set_fact:
+    caddy_webserver_current_build_signature: >-
+      {{
+        (caddy_webserver_existing_build_signature.content | default('') | length > 0)
+        | ternary((caddy_webserver_existing_build_signature.content | b64decode | trim), '')
+      }}
+  tags: ['caddy', 'build']
+
+- name: Compute desired Caddy build signature
+  ansible.builtin.set_fact:
+    caddy_webserver_desired_build_signature: "{{ caddy_version }}::{{ (caddy_modules | default([])) | join(',') }}"
+    caddy_webserver_rebuild_needed: >-
+      {{
+        (caddy_webserver_current_build_signature | default(''))
+        != (caddy_version ~ '::' ~ (caddy_modules | default([]) | join(',')))
+      }}
+  tags: ['caddy', 'build']
+
+- name: Build custom Caddy binary with modules
+  ansible.builtin.command: >
+    /usr/local/bin/xcaddy build v{{ caddy_version }}
+    {% for module in caddy_modules | default([]) %}
+    --with {{ module }}
+    {% endfor %}
+    --output /usr/bin/caddy
+  args:
+    chdir: /usr/local/src/caddy-build
+  environment:
+    XCADDY_SKIP_CGO: "1"
+  when: caddy_webserver_rebuild_needed | default(true)
+  changed_when: true
+  notify: Reload Caddy
+  tags: ['caddy', 'build']
+
+- name: Record current Caddy build signature
+  ansible.builtin.copy:
+    dest: /usr/local/src/caddy-build/.build_signature
+    content: "{{ caddy_webserver_desired_build_signature }}\n"
+    owner: root
+    group: root
+    mode: '0644'
+  when: caddy_webserver_rebuild_needed | default(true)
+  tags: ['caddy', 'build']
+
+- name: Check installed Hugo version
+  ansible.builtin.command: "/usr/local/bin/hugo version"
+  register: caddy_webserver_hugo_version_cmd
+  failed_when: false
+  changed_when: false
+  tags: ['hugo', 'packages']
+
+- name: Determine if Hugo installation is required
+  ansible.builtin.set_fact:
+    caddy_webserver_install_hugo: "{{ (caddy_webserver_hugo_version_cmd.rc != 0) or ('v' ~ hugo_version not in caddy_webserver_hugo_version_cmd.stdout) }}"
+  tags: ['hugo', 'packages']
+
+- name: Install Hugo from official release
+  tags: ['hugo', 'packages']
+  when: caddy_webserver_install_hugo | default(true)
+  vars:
+    hugo_workspace: "/tmp/hugo-install"
+    hugo_archive_name: "hugo_extended_{{ hugo_version }}_linux-amd64.tar.gz"
+    hugo_download_url: "https://github.com/gohugoio/hugo/releases/download/v{{ hugo_version }}/{{ hugo_archive_name }}"
+  block:
+    - name: Ensure Hugo source directory exists
+      ansible.builtin.file:
+        path: "{{ hugo_workspace }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download Hugo release archive
+      ansible.builtin.get_url:
+        url: "{{ hugo_download_url }}"
+        dest: "{{ hugo_workspace }}/{{ hugo_archive_name }}"
+        mode: '0644'
+
+    - name: Ensure Hugo extraction directory exists
+      ansible.builtin.file:
+        path: "{{ hugo_workspace }}/hugo-{{ hugo_version }}"
+        state: directory
+        mode: '0755'
+
+    - name: Extract Hugo binary
+      ansible.builtin.unarchive:
+        src: "{{ hugo_workspace }}/{{ hugo_archive_name }}"
+        dest: "{{ hugo_workspace }}/hugo-{{ hugo_version }}"
+        remote_src: true
+
+    - name: Install Hugo binary
+      ansible.builtin.copy:
+        src: "{{ hugo_workspace }}/hugo-{{ hugo_version }}/hugo"
+        dest: "/usr/local/bin/hugo"
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: true
+
+    - name: Remove Hugo archive
+      ansible.builtin.file:
+        path: "{{ hugo_workspace }}/{{ hugo_archive_name }}"
+        state: absent
+
+    - name: Remove Hugo extraction directory
+      ansible.builtin.file:
+        path: "{{ hugo_workspace }}/hugo-{{ hugo_version }}"
+        state: absent
+
+- name: Create website and log directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ webrebuild_service_user }}"
+    group: "{{ webrebuild_service_group }}"
+    mode: '0755'
+  loop:
+    - "{{ website_root }}"
+    - "{{ caddy_log_path }}"
+  tags: ['directories']
+
+- name: Check if Caddy access log exists
+  ansible.builtin.stat:
+    path: "{{ caddy_log_path }}/access.log"
+  register: caddy_webserver_access_log_stat
+  tags: ['caddy', 'directories']
+
+- name: Create Caddy access log if missing
+  ansible.builtin.file:
+    path: "{{ caddy_log_path }}/access.log"
+    state: touch
+    owner: "{{ webrebuild_service_user }}"
+    group: "{{ webrebuild_service_group }}"
+    mode: '0640'
+  when: not caddy_webserver_access_log_stat.stat.exists
+  tags: ['caddy', 'directories']
+
+- name: Ensure Caddy config directory exists
+  ansible.builtin.file:
+    path: /etc/caddy
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags: ['caddy', 'directories']
+
+- name: Ensure Caddy service drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/caddy.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags: ['caddy', 'systemd']
+
+- name: Configure Caddy Cloudflare credentials
+  ansible.builtin.template:
+    src: caddy-env.conf.j2
+    dest: /etc/systemd/system/caddy.service.d/cloudflare.conf
+    owner: root
+    group: root
+    mode: '0600'
+  when: cloudflare_api_token | length > 0
+  notify: Reload Caddy
+  tags: ['caddy', 'systemd']
+
+- name: Remove Cloudflare credentials drop-in when not set
+  ansible.builtin.file:
+    path: /etc/systemd/system/caddy.service.d/cloudflare.conf
+    state: absent
+  when: cloudflare_api_token | length == 0
+  notify: Reload Caddy
+  tags: ['caddy', 'systemd']
+
+- name: Create Caddy data directory
+  ansible.builtin.file:
+    path: /var/lib/caddy
+    state: directory
+    owner: caddy
+    group: caddy
+    mode: '0750'
+  tags: ['caddy', 'directories']
+
+- name: Ensure deploy SSH directory exists
+  ansible.builtin.file:
+    path: "{{ deploy_ssh_key_dir }}"
+    state: directory
+    owner: "{{ deploy_ssh_key_user }}"
+    group: "{{ deploy_ssh_key_group }}"
+    mode: '0700'
+  tags: ['ssh', 'deploy-key']
+
+- name: Generate deploy SSH key
+  community.crypto.openssh_keypair:
+    path: "{{ deploy_ssh_key_path }}"
+    type: "{{ deploy_ssh_key_type }}"
+    comment: "{{ deploy_ssh_key_comment }}"
+    state: present
+    owner: "{{ deploy_ssh_key_user }}"
+    group: "{{ deploy_ssh_key_group }}"
+    mode: '0600'
+  tags: ['ssh', 'deploy-key']
+
+- name: Read deploy public key
+  ansible.builtin.slurp:
+    src: "{{ deploy_ssh_key_path }}.pub"
+  register: caddy_webserver_deploy_public_key_content
+  tags: ['ssh', 'deploy-key']
+
+- name: Check if website repository already cloned
+  ansible.builtin.stat:
+    path: "{{ website_root }}/.git"
+  register: caddy_webserver_repo_git
+  tags: ['website', 'initial-build']
+
+- name: Display deploy public key
+  ansible.builtin.debug:
+    msg:
+      - "Deploy SSH Public Key (add this to GitHub): {{ caddy_webserver_deploy_public_key_content.content | b64decode | trim }}"
+  when: not caddy_webserver_repo_git.stat.exists | default(false)
+  tags: ['ssh', 'deploy-key']
+
+- name: Wait for deploy key to be added to repository
+  ansible.builtin.pause:
+    prompt: |
+      Add the deploy key shown above to {{ website_repo_url }} in GitHub, then press Enter to continue.
+  when:
+    - (wait_for_deploy_key_confirmation | default(true)) | bool
+    - not caddy_webserver_repo_git.stat.exists | default(false)
+  tags: ['ssh', 'deploy-key']
+
+- name: Save deploy public key to local file
+  ansible.builtin.copy:
+    content: "{{ caddy_webserver_deploy_public_key_content.content | b64decode }}"
+    dest: "{{ playbook_dir }}/deploy_key.pub"
+    mode: '0644'
+  delegate_to: localhost
+  become: false
+  run_once: true
+  tags: ['ssh', 'deploy-key']
+
+- name: Configure SSH to use deploy key for GitHub
+  ansible.builtin.blockinfile:
+    path: "{{ deploy_ssh_key_dir }}/config"
+    create: true
+    owner: "{{ deploy_ssh_key_user }}"
+    group: "{{ deploy_ssh_key_group }}"
+    mode: '0600'
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - GitHub deploy key"
+    block: |
+      Host github.com
+        HostName github.com
+        User git
+        IdentityFile {{ deploy_ssh_key_path }}
+        StrictHostKeyChecking accept-new
+  tags: ['ssh', 'deploy-key']
+
+- name: Deploy Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: caddy
+    mode: '0644'
+  notify: Reload Caddy
+  tags: ['caddy', 'config']
+
+- name: Format Caddyfile with caddy fmt
+  ansible.builtin.command: /usr/bin/caddy fmt --overwrite /etc/caddy/Caddyfile
+  environment: >-
+    {{
+      {'CLOUDFLARE_API_TOKEN': cloudflare_api_token}
+      if cloudflare_api_token | length > 0
+      else {}
+    }}
+  changed_when: false
+  tags: ['caddy', 'config']
+
+- name: Validate Caddy configuration
+  ansible.builtin.command: /usr/bin/caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile
+  environment: >-
+    {{
+      {'CLOUDFLARE_API_TOKEN': cloudflare_api_token}
+      if cloudflare_api_token | length > 0
+      else {}
+    }}
+  changed_when: false
+  tags: ['caddy', 'config']
+
+- name: Validate website rebuild commands
+  ansible.builtin.assert:
+    that:
+      - webrebuild_commands is defined
+      - webrebuild_commands | length > 0
+    fail_msg: "Define at least one command in webrebuild_commands for the rebuild service."
+  tags: ['website', 'rebuild']
+
+- name: Deploy website rebuild systemd service
+  ansible.builtin.template:
+    src: webrebuild.service.j2
+    dest: /etc/systemd/system/webrebuild.service
+    owner: root
+    group: root
+    mode: '0644'
+  tags: ['website', 'rebuild', 'systemd']
+
+- name: Deploy website rebuild systemd timer
+  ansible.builtin.template:
+    src: webrebuild.timer.j2
+    dest: /etc/systemd/system/webrebuild.timer
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart webrebuild timer
+  tags: ['website', 'rebuild', 'systemd']
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+  tags: ['systemd']
+
+- name: Enable and start Caddy service
+  ansible.builtin.systemd:
+    name: caddy
+    enabled: true
+    state: started
+  tags: ['caddy', 'systemd']
+
+- name: Enable and start webrebuild timer
+  ansible.builtin.systemd:
+    name: webrebuild.timer
+    enabled: true
+    state: started
+  tags: ['website', 'rebuild', 'systemd']
+
+- name: Recreate website root directory when repository missing
+  ansible.builtin.file:
+    path: "{{ website_root }}"
+    state: "{{ item }}"
+    owner: "{{ webrebuild_service_user }}"
+    group: "{{ webrebuild_service_group }}"
+    mode: '0755'
+  loop:
+    - absent
+    - directory
+  when: not caddy_webserver_repo_git.stat.exists | default(false)
+  tags: ['website', 'directories', 'initial-build']
+
+- name: Clone website repository
+  ansible.builtin.git:
+    repo: "{{ website_repo_url }}"
+    dest: "{{ website_root }}"
+    version: "{{ website_repo_branch }}"
+    accept_hostkey: true
+    update: true
+  become: true
+  become_user: caddy
+  register: caddy_webserver_repo
+  retries: 3
+  delay: 5
+  until: caddy_webserver_repo is succeeded
+  tags: ['website', 'initial-build']
+
+- name: Ensure website public directory exists
+  ansible.builtin.file:
+    path: "{{ website_public_dir }}"
+    state: directory
+    owner: "{{ webrebuild_service_user }}"
+    group: "{{ webrebuild_service_group }}"
+    mode: '0755'
+  tags: ['website', 'directories']
+
+- name: Check website public directory contents
+  ansible.builtin.find:
+    paths: "{{ website_public_dir }}"
+    file_type: any
+    hidden: true
+  register: caddy_webserver_public_dir_contents
+  when: (webrebuild_commands | default([])) | length > 0
+  tags: ['website', 'initial-build']
+
+- name: Determine if initial webrebuild is required
+  ansible.builtin.set_fact:
+    caddy_webserver_initial_build: >-
+      {{
+        (caddy_webserver_repo.changed | default(false)) or
+        ((((caddy_webserver_public_dir_contents.files | default([])) | length) == 0))
+      }}
+  when: (webrebuild_commands | default([])) | length > 0
+  tags: ['website', 'initial-build']
+
+- name: Remove stale Hugo build lock
+  ansible.builtin.file:
+    path: "{{ website_root }}/.hugo_build.lock"
+    state: absent
+  when:
+    - caddy_webserver_initial_build | default(false)
+    - (webrebuild_commands | default([])) | length > 0
+  become: true
+  tags: ['website', 'initial-build']
+
+- name: Run initial webrebuild commands
+  ansible.builtin.command: "{{ item }}"
+  args:
+    chdir: "{{ website_root }}"
+  loop: "{{ webrebuild_commands | default([]) }}"
+  when:
+    - caddy_webserver_initial_build | default(false)
+    - (webrebuild_commands | default([])) | length > 0
+  changed_when: true
+  become: true
+  become_user: caddy
+  environment:
+    PATH: "{{ caddy_webserver_rebuild_path }}"
+  tags: ['website', 'initial-build']

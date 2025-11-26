@@ -1,0 +1,60 @@
+# Caddyfile for {{ domain }}
+# Managed by Ansible - do not edit manually.
+{% if (cloudflare_api_token | length > 0) or (caddy_acme_ca | length > 0) %}
+{
+{% if caddy_acme_ca | length > 0 %}
+	acme_ca {{ caddy_acme_ca }}
+{% endif %}
+{% if cloudflare_api_token | length > 0 %}
+	acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+{% endif %}
+}
+{% endif %}
+
+www.{{ domain }} {
+	# Redirect www to non-www domain.
+	redir https://{{ domain }}{uri} permanent
+}
+
+{{ domain }} {
+	# Root directory for static files.
+	root * {{ website_public_dir }}
+
+	# Enable static file server.
+	file_server
+
+{% if caddy_rate_limit.enabled | default(false) %}
+	# Basic rate limiting per client IP to slow down bots/scanners.
+	rate_limit {
+		zone per_client {
+			key {remote_ip}
+			events {{ caddy_rate_limit.events }}
+			window {{ caddy_rate_limit.window }}
+		}
+	}
+{% endif %}
+
+	# Enable compression.
+	encode {% for format in caddy_compression_formats %}{{ format }} {% endfor %}
+
+
+	# TLS configuration with admin email.
+	tls {{ admin_email }}
+
+	# Access logging.
+	log {
+		output file {{ caddy_log_path }}/access.log {
+			roll_size 100MiB
+			roll_local_time
+			roll_keep_for 15d
+		}
+	}
+
+	# Security headers.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://static.cloudflareinsights.com; font-src 'self' data:; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com https://static.cloudflareinsights.com https://cloudflareinsights.com"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
